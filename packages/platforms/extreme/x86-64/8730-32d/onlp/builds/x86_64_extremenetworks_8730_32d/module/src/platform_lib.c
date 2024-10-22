@@ -221,15 +221,23 @@ psu_type_t psu_type_get(int id, char* modelname, int modelname_len)
 #define EEPROM_SIZE 256
 int eeprom_tlv_read(uint8_t *rdata, int type, char *data)
 {
-    uint8_t i, j, TLV_length;
+    uint16_t i, j, TLV_length;
     int total_data_length = EEPROM_SIZE;
     int TLV_type;
 
     for (i = 0; i < total_data_length;)
     {
+        if (i + 4 > total_data_length)
+            break;
+
         TLV_type = ((*(rdata + i)) << 8) + (*(rdata + i + 1));
         TLV_length = ((*(rdata + i + 2)) << 8) + (*(rdata + i + 3));
-        //printf("Type:%d Len:%d\n", TLV_type, TLV_length);
+
+        //printf("Type:%d TLV_type:%d Len:%d\n", type, TLV_type, TLV_length);
+
+        if (TLV_length > EEPROM_SIZE - 1)
+            return -1;
+        
         if (TLV_type == type)
         {
             for (j = 0; j < TLV_length; j++)
@@ -243,5 +251,6 @@ int eeprom_tlv_read(uint8_t *rdata, int type, char *data)
         i += (TLV_length + 4);
         //printf("i:%d\n",i);
     }
-    return 0;
+    //printf("TLV NOT match\n");
+    return -1;
 }

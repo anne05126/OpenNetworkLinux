@@ -40,19 +40,28 @@
 
 #define DRVNAME "8730_psu"
 
-#define IPMI_SENSOR_NETFN           0x34
-#define IPMI_SENSOR_READ_CMD 		0x11
-#define IPMI_PSU_THERMAL_READ_CMD 	0x12
-#define IPMI_PSU_FAN_READ_CMD 		0x13
-#define IPMI_PSU_FRU_READ_CMD 		0x14
-#define IPMI_PSU_STATUS_READ_CMD 	0x15
-#define IPMI_PSU_FANDIR_READ_CMD 	0x16
+#define IPMI_SENSOR_NETFN           	0x34
+#define IPMI_SENSOR_READ_CMD 			0x11
+#define IPMI_PSU_THERMAL_READ_CMD 		0x12
+#define IPMI_PSU_FAN_READ_CMD 			0x13
+#define IPMI_PSU_FRU_READ_CMD 			0x14
+#define IPMI_PSU_STATUS_READ_CMD 		0x15
+#define IPMI_PSU_FANDIR_READ_CMD 		0x16
 
-#define IPMI_TIMEOUT				(20 * HZ)
-#define IPMI_ERR_RETRY_TIMES		1
+/* For read PSU AC_OK */
+#define IPMI_APP_NETFN					0x06
+#define IPMI_READ_WRITE_CMD        		0x52
+#define IPMI_PWRCPLD_BUS				0x09
+#define IPMI_PWRCPLD_ADDRESS			0xbe	/* 0x5f << 1 = 0xbe */
+#define IPMI_READ_BYTE					0x01
+#define IPMI_SENSOR_OFFSET_PSU1_STAT    0x11
+#define IPMI_SENSOR_OFFSET_PSU2_STAT    0x12
 
-#define IPMI_SENSOR_OFFSET_PSU1		0x01
-#define IPMI_SENSOR_OFFSET_PSU2		0x02
+#define IPMI_TIMEOUT					(20 * HZ)
+#define IPMI_ERR_RETRY_TIMES			1
+
+#define IPMI_SENSOR_OFFSET_PSU1			0x01
+#define IPMI_SENSOR_OFFSET_PSU2			0x02
 
 static unsigned int debug = 0;
 module_param(debug, uint, S_IRUGO);
@@ -76,7 +85,8 @@ enum psu_id {
 
 enum psu_status_byte_index {
 	PSU_PRESENT = 0,
-	PSU_POWER_GOOD_CPLD
+	PSU_POWER_GOOD_CPLD,
+	PSU_AC_OK
 };
 
 enum psu_power_value_byte_index {
@@ -161,6 +171,7 @@ struct ipmi_data {
 struct ipmi_psu_resp_data {
 	char   fru[50];
 	unsigned char   status[2];	/* 0: Present(1) Not Present(0), 1: Power Good(1) No Power Good(0) */
+	unsigned char   status_acok_raw;	/* bit0: Present, bit1: Power Good, bit2: Input Power good(1) Input Power no good(0), bit3: ALERT, bit4-7: Reserved */
 	unsigned char   power_value[24];	/* 0-3: VIN, 4-7: VOUT, 8-11: IIN, 12-15: IOUT, 16-19: PIN, 20-23: POUT */
 	unsigned char   temp_input[12];	/* 0-3: Temp0, 4-7: Temp1, 8-11: Temp2 */
 	unsigned char   fan_input[8];		/* 0-3: FAN0, 4-7: FAN1 */
@@ -176,7 +187,7 @@ struct extreme8730_32d_psu_data {
 	unsigned long	 last_updated_status[2]; /* In jiffies, 0: PSU1, 1: PSU2 */
 	struct ipmi_data ipmi;
 	struct ipmi_psu_resp_data ipmi_resp[2]; /* 0: PSU1, 1: PSU2 */
-	unsigned char ipmi_tx_data[2];
+	unsigned char ipmi_tx_data[4];
 };
 
 struct extreme8730_32d_psu_data *data = NULL;
@@ -192,6 +203,7 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 
 #define PSU_PRESENT_ATTR_ID(index)      PSU##index##_PRESENT
 #define PSU_POWERGOOD_ATTR_ID(index)    PSU##index##_POWER_GOOD
+#define PSU_ACOK_ATTR_ID(index)    		PSU##index##_AC_OK
 #define PSU_VIN_ATTR_ID(index)          PSU##index##_VIN
 #define PSU_VOUT_ATTR_ID(index)         PSU##index##_VOUT
 #define PSU_IIN_ATTR_ID(index)         	PSU##index##_IIN
@@ -209,6 +221,7 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 #define PSU_ATTR(psu_id) \
 		PSU_PRESENT_ATTR_ID(psu_id),		\
 		PSU_POWERGOOD_ATTR_ID(psu_id),		\
+		PSU_ACOK_ATTR_ID(psu_id),		\
 		PSU_VIN_ATTR_ID(psu_id),		\
 		PSU_VOUT_ATTR_ID(psu_id),		\
 		PSU_IIN_ATTR_ID(psu_id),		\
@@ -235,6 +248,7 @@ enum extreme8730_32d_psu_sysfs_attrs {
 #define DECLARE_PSU_SENSOR_DEVICE_ATTR(index) \
 		static SENSOR_DEVICE_ATTR(psu##index##_present, S_IRUGO, show_psu,	 NULL, PSU##index##_PRESENT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_power_good, S_IRUGO, show_psu,  NULL, PSU##index##_POWER_GOOD); \
+		static SENSOR_DEVICE_ATTR(psu##index##_ac_ok, S_IRUGO, show_psu,  NULL, PSU##index##_AC_OK); \
 		static SENSOR_DEVICE_ATTR(psu##index##_vin, S_IRUGO, show_psu,	 NULL, PSU##index##_VIN); \
 		static SENSOR_DEVICE_ATTR(psu##index##_vout, S_IRUGO, show_psu,  NULL, PSU##index##_VOUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_iin, S_IRUGO, show_psu,  NULL, PSU##index##_IIN); \
@@ -251,6 +265,7 @@ enum extreme8730_32d_psu_sysfs_attrs {
 #define DECLARE_PSU_ATTR(index) \
 		&sensor_dev_attr_psu##index##_present.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_power_good.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_ac_ok.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_vin.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_vout.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_iin.dev_attr.attr, \
@@ -398,7 +413,7 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 	}
 
 	data->valid_status[pid] = 0;
-
+	data->ipmi.tx_message.netfn = IPMI_SENSOR_NETFN;
 
 	switch (pid) 
     {
@@ -420,9 +435,7 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 				   sizeof(data->ipmi_resp[pid].status));
 
 	if (unlikely(status != 0))
-		{DEBUG_PRINT("%s:%d \n", __FUNCTION__, __LINE__);
 		goto exit;
-		}
 
 	if (unlikely(data->ipmi.rx_result != 0)) {
 		status = -EIO;
@@ -472,6 +485,38 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 		goto exit;
 	}
 
+	/* Get AC_OK from ipmi */
+	data->ipmi.tx_message.netfn = IPMI_APP_NETFN;
+	data->ipmi_tx_data[0] = IPMI_PWRCPLD_BUS;
+	data->ipmi_tx_data[1] = IPMI_PWRCPLD_ADDRESS;
+	data->ipmi_tx_data[2] = IPMI_READ_BYTE;
+
+	switch (pid) 
+    {
+		case PSU_1:
+			data->ipmi_tx_data[3] = IPMI_SENSOR_OFFSET_PSU1_STAT;
+			break;
+		case PSU_2:
+			data->ipmi_tx_data[3] = IPMI_SENSOR_OFFSET_PSU2_STAT;
+			break;
+		default:
+			status = -EIO;
+			goto exit;
+	}
+
+	status = ipmi_send_message(&data->ipmi, IPMI_READ_WRITE_CMD,
+				   data->ipmi_tx_data, 4,
+				   &data->ipmi_resp[pid].status_acok_raw,
+				   sizeof(data->ipmi_resp[pid].status_acok_raw));
+
+	if (unlikely(status != 0))
+		goto exit;
+
+	if (unlikely(data->ipmi.rx_result != 0)) {
+		status = -EIO;
+		goto exit;
+	}
+
 	data->last_updated_status[pid] = jiffies;
 	data->valid_status[pid] = 1;
 
@@ -490,7 +535,7 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_string(struct
 	}
 
 	data->valid[pid] = 0;
-
+	data->ipmi.tx_message.netfn = IPMI_SENSOR_NETFN;
 
 	switch (pid) 
     {
@@ -561,7 +606,12 @@ static ssize_t show_psu(struct device *dev, struct device_attribute *da, char *b
 		case PSU2_POWER_GOOD:
             VALIDATE_PRESENT_RETURN(pid);
 			value = data->ipmi_resp[pid].status[PSU_POWER_GOOD_CPLD];
-			break;
+			break;		
+		case PSU1_AC_OK:
+		case PSU2_AC_OK:
+            VALIDATE_PRESENT_RETURN(pid);
+			value = !!((int)data->ipmi_resp[pid].status_acok_raw & (1 << PSU_AC_OK));
+			break;		
 		case PSU1_VIN:
 		case PSU2_VIN:
 			VALIDATE_PRESENT_RETURN(pid);
