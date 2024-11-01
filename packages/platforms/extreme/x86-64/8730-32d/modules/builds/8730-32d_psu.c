@@ -443,6 +443,8 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 		goto exit;
 	}
 
+if(data->ipmi_resp[pid].status[PSU_PRESENT] != 0)
+{
 	/* Get power value from ipmi */
 	status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_READ_CMD,
 				   data->ipmi_tx_data, 1,
@@ -484,6 +486,7 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 		status = -EIO;
 		goto exit;
 	}
+}
 
 	/* Get AC_OK from ipmi */
 	data->ipmi.tx_message.netfn = IPMI_APP_NETFN;
@@ -604,12 +607,10 @@ static ssize_t show_psu(struct device *dev, struct device_attribute *da, char *b
 			break;
 		case PSU1_POWER_GOOD:
 		case PSU2_POWER_GOOD:
-            VALIDATE_PRESENT_RETURN(pid);
 			value = data->ipmi_resp[pid].status[PSU_POWER_GOOD_CPLD];
 			break;		
 		case PSU1_AC_OK:
 		case PSU2_AC_OK:
-            VALIDATE_PRESENT_RETURN(pid);
 			value = !!((int)data->ipmi_resp[pid].status_acok_raw & (1 << PSU_AC_OK));
 			break;		
 		case PSU1_VIN:
