@@ -655,7 +655,15 @@ static ssize_t set_led(struct device *dev, struct device_attribute *da,
 			goto exit;
 	}
 	
-	data->ipmi_tx_data[1] = data->ipmi_resp[group] | sw_led_control;
+	if(attr->index == LED_STAT)
+	{	/* LED_STAT can be controlled by the CPU or BMC regardless of whether bit 7 is 0 or 1 */
+		/* To allow hardware to control LED_SEC (bit7 is 0), changing the LED_STAT status will not set bit 7 to 1*/
+		data->ipmi_tx_data[1] = data->ipmi_resp[group];
+	}
+	else
+	{
+		data->ipmi_tx_data[1] = data->ipmi_resp[group] | sw_led_control;
+	}
 	
 	error = ipmi_send_message(&data->ipmi, IPMI_LED_WRITE_CMD,
 				   data->ipmi_tx_data, 2,
