@@ -47,6 +47,10 @@
 #define IPMI_PSU_FRU_READ_CMD 			0x14
 #define IPMI_PSU_STATUS_READ_CMD 		0x15
 #define IPMI_PSU_FANDIR_READ_CMD 		0x16
+/* For read PSU system number */
+#define IPMI_PSU_EEPROM_READ_CMD 		0x1f
+#define PSU_SYSTEMNUM_OFFSET_START		0xd8
+#define PSU_SYSTEMNUM_OFFSET_END		0xe3
 
 /* For read PSU AC_OK */
 #define IPMI_APP_NETFN					0x06
@@ -169,7 +173,8 @@ struct ipmi_data {
 };
 
 struct ipmi_psu_resp_data {
-	char   fru[50];
+	unsigned char   fru[50];
+	unsigned char   eeprom[256];
 	unsigned char   status[2];	/* 0: Present(1) Not Present(0), 1: Power Good(1) No Power Good(0) */
 	unsigned char   status_acok_raw;	/* bit0: Present, bit1: Power Good, bit2: Input Power good(1) Input Power no good(0), bit3: ALERT, bit4-7: Reserved */
 	unsigned char   power_value[24];	/* 0-3: VIN, 4-7: VOUT, 8-11: IIN, 12-15: IOUT, 16-19: PIN, 20-23: POUT */
@@ -212,6 +217,7 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 #define PSU_POUT_ATTR_ID(index)         PSU##index##_POUT
 #define PSU_MODEL_ATTR_ID(index)        PSU##index##_MODEL
 #define PSU_SERIAL_ATTR_ID(index)       PSU##index##_SERIAL
+#define PSU_SYSTEMNUM_ATTR_ID(index)    PSU##index##_SYSTEMNUM
 #define PSU_TEMP1_INPUT_ATTR_ID(index)  PSU##index##_TEMP1_INPUT
 #define PSU_TEMP2_INPUT_ATTR_ID(index)  PSU##index##_TEMP2_INPUT
 #define PSU_TEMP3_INPUT_ATTR_ID(index)  PSU##index##_TEMP3_INPUT
@@ -230,6 +236,7 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 		PSU_POUT_ATTR_ID(psu_id),		\
 		PSU_MODEL_ATTR_ID(psu_id),		\
 		PSU_SERIAL_ATTR_ID(psu_id), 	\
+		PSU_SYSTEMNUM_ATTR_ID(psu_id), 	\
 		PSU_TEMP1_INPUT_ATTR_ID(psu_id), \
 		PSU_TEMP2_INPUT_ATTR_ID(psu_id), \
 		PSU_TEMP3_INPUT_ATTR_ID(psu_id), \
@@ -257,6 +264,7 @@ enum extreme8730_32d_psu_sysfs_attrs {
 		static SENSOR_DEVICE_ATTR(psu##index##_pout, S_IRUGO, show_psu,  NULL, PSU##index##_POUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_model, S_IRUGO, show_string,  NULL, PSU##index##_MODEL); \
 		static SENSOR_DEVICE_ATTR(psu##index##_serial, S_IRUGO, show_string,  NULL, PSU##index##_SERIAL);\
+		static SENSOR_DEVICE_ATTR(psu##index##_systemnum, S_IRUGO, show_string,  NULL, PSU##index##_SYSTEMNUM);\
 		static SENSOR_DEVICE_ATTR(psu##index##_temp1_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP1_INPUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_temp2_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP2_INPUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_temp3_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP3_INPUT); \
@@ -274,6 +282,7 @@ enum extreme8730_32d_psu_sysfs_attrs {
 		&sensor_dev_attr_psu##index##_pout.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_model.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_serial.dev_attr.attr,\
+		&sensor_dev_attr_psu##index##_systemnum.dev_attr.attr,\
 		&sensor_dev_attr_psu##index##_temp1_input.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_temp2_input.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_temp3_input.dev_attr.attr, \
@@ -567,6 +576,20 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_string(struct
 		goto exit;
 	}
 
+	/* Get eeprom from ipmi */
+	status = ipmi_send_message(&data->ipmi, IPMI_PSU_EEPROM_READ_CMD,
+				   data->ipmi_tx_data, 1,
+				   data->ipmi_resp[pid].eeprom,
+				   sizeof(data->ipmi_resp[pid].eeprom));
+	
+	if (unlikely(status != 0))
+		goto exit;
+
+	if (unlikely(data->ipmi.rx_result != 0)) {
+		status = -EIO;
+		goto exit;
+	}
+
 	data->last_updated[pid] = jiffies;
 	data->valid[pid] = 1;
 
@@ -720,8 +743,8 @@ static ssize_t show_string(struct device *dev, struct device_attribute *da, char
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
 	unsigned char pid = attr->index / NUM_OF_PER_PSU_ATTR;
-	char tmp_str[50];
-	char *str = NULL;
+	unsigned char tmp_str[300];
+	unsigned char *str = NULL;
 	int error = 0;
 	int vendor_length = 0;
 	int model_length = 0;
@@ -754,6 +777,14 @@ static ssize_t show_string(struct device *dev, struct device_attribute *da, char
 			str = tmp_str;
 			memmove(str, &tmp_str[NUM_OF_LEN + vendor_length + model_length], serial_length);
 			str[serial_length] = '\0';
+			break;
+		case PSU1_SYSTEMNUM:
+		case PSU2_SYSTEMNUM:
+			memcpy(tmp_str, data->ipmi_resp[pid].eeprom, sizeof(data->ipmi_resp[pid].eeprom));
+			tmp_str[sizeof(data->ipmi_resp[pid].eeprom)] = '\0';
+			str = tmp_str;
+			memmove(str, &tmp_str[PSU_SYSTEMNUM_OFFSET_START], (PSU_SYSTEMNUM_OFFSET_END-PSU_SYSTEMNUM_OFFSET_START+1));
+			str[PSU_SYSTEMNUM_OFFSET_END-PSU_SYSTEMNUM_OFFSET_START+1] = '\0';
 			break;
 		default:
 			error = -EINVAL;
