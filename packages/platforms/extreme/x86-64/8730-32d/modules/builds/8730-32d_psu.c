@@ -51,6 +51,10 @@
 #define IPMI_PSU_EEPROM_READ_CMD 		0x1f
 #define PSU_SYSTEMNUM_OFFSET_START		0xd8
 #define PSU_SYSTEMNUM_OFFSET_END		0xe3
+/* For read PSU Extreme S/N */
+#define PSU_Extreme_SN_READ		 		1		/* 1: Extreme S/N, 0: manufacturer¡¦s S/N */
+#define PSU_Extreme_SN_OFFSET_START		0xe4
+#define PSU_Extreme_SN_OFFSET_END		0xf2
 
 /* For read PSU AC_OK */
 #define IPMI_APP_NETFN					0x06
@@ -748,7 +752,10 @@ static ssize_t show_string(struct device *dev, struct device_attribute *da, char
 	int error = 0;
 	int vendor_length = 0;
 	int model_length = 0;
+#if PSU_Extreme_SN_READ
+#else
 	int serial_length = 0;
+#endif
 	int i = 0;
 
 	mutex_lock(&data->update_lock);
@@ -761,7 +768,10 @@ static ssize_t show_string(struct device *dev, struct device_attribute *da, char
 
 	vendor_length = data->ipmi_resp[pid].fru[VENDOR_LEN];
 	model_length = data->ipmi_resp[pid].fru[MODEL_LEN];
+#if PSU_Extreme_SN_READ
+#else
 	serial_length = data->ipmi_resp[pid].fru[SERIAL_LEN];
+#endif
 
 	switch (attr->index) {
 		case PSU1_MODEL:
@@ -773,10 +783,18 @@ static ssize_t show_string(struct device *dev, struct device_attribute *da, char
 			break;
 		case PSU1_SERIAL:
 		case PSU2_SERIAL:
+		#if PSU_Extreme_SN_READ
+			memcpy(tmp_str, data->ipmi_resp[pid].eeprom, sizeof(data->ipmi_resp[pid].eeprom));
+			tmp_str[sizeof(data->ipmi_resp[pid].eeprom)] = '\0';
+			str = tmp_str;
+			memmove(str, &tmp_str[PSU_Extreme_SN_OFFSET_START], (PSU_Extreme_SN_OFFSET_END-PSU_Extreme_SN_OFFSET_START+1));
+			str[PSU_Extreme_SN_OFFSET_END-PSU_Extreme_SN_OFFSET_START+1] = '\0';
+		#else
 			strcpy(tmp_str, data->ipmi_resp[pid].fru);
 			str = tmp_str;
 			memmove(str, &tmp_str[NUM_OF_LEN + vendor_length + model_length], serial_length);
 			str[serial_length] = '\0';
+		#endif
 			break;
 		case PSU1_SYSTEMNUM:
 		case PSU2_SYSTEMNUM:
