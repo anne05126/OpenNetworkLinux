@@ -62,6 +62,14 @@
 #define CPLD_REG_ADDR_MODSELECT_1         0x0b
 #define CPLD_REG_ADDR_MODSELECT_2         0x0c
 #define CPLD_REG_ADDR_PORT_LED_CONTROL    0x0d
+/* Starting from version 5 of the port CPLD */
+#define CPLD_REG_ADDR_RESET_05_1          0x09
+#define CPLD_REG_ADDR_RESET_05_2          0x0a
+#define CPLD_REG_ADDR_LOWPOWERMODE_05_1   0x0b
+#define CPLD_REG_ADDR_LOWPOWERMODE_05_2   0x0c
+#define CPLD_REG_ADDR_MODSELECT_05_1      0x0d
+#define CPLD_REG_ADDR_MODSELECT_05_2      0x0e
+#define CPLD_REG_ADDR_PORT_LED_CONTROL_05 0x0f
 
 #define CPLD_VERSION_BITS_MASK    		  0xF
 
@@ -448,6 +456,9 @@ static ssize_t show_present_all(struct device *dev, struct device_attribute *da,
     struct i2c_client *client = to_i2c_client(dev);
     struct extreme8730_32d_cpld_data *data = i2c_get_clientdata(client);
 
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
+
     mutex_lock(&data->update_lock);
 
     num_regs = 2;
@@ -465,7 +476,10 @@ static ssize_t show_present_all(struct device *dev, struct device_attribute *da,
     mutex_unlock(&data->update_lock);
 
     /* Return values 1 -> 8 in order */
-    status = sprintf(buf, "%.2x %.2x\n", values[0], values[1]);
+    if(cpld_version > 4)
+        status = sprintf(buf, "%.2x %.2x\n", (u8)~values[0], (u8)~values[1]);
+    else
+        status = sprintf(buf, "%.2x %.2x\n", values[0], values[1]);
 
     return status;
 
@@ -482,15 +496,24 @@ static ssize_t show_led_control(struct device *dev, struct device_attribute *da,
     struct extreme8730_32d_cpld_data *data = i2c_get_clientdata(client);
     int status = 0;
     u8 reg = 0, mask = 0, revert = 1;
+
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
     
     switch (attr->index)
 	{   
         case CPLD_PORT_LED_ENABLE_1:
-            reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
+            if(cpld_version > 4)
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL_05;
+            else
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
 			mask = 0x1;
             break;
         case CPLD_PORT_LED_ENABLE_2:
-            reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
+            if(cpld_version > 4)
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL_05;
+            else
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
 			mask = 0x1;
             break;
         default:
@@ -519,6 +542,9 @@ static ssize_t show_interrupt(struct device *dev, struct device_attribute *da,
     struct extreme8730_32d_cpld_data *data = i2c_get_clientdata(client);
     int status = 0;
     u8 reg = 0; 
+
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
     
     switch (attr->index)
 	{   
@@ -545,7 +571,10 @@ static ssize_t show_interrupt(struct device *dev, struct device_attribute *da,
     }
     mutex_unlock(&data->update_lock);
 
-    return sprintf(buf, "0x%x\n", status);
+    if(cpld_version > 4)
+        return sprintf(buf, "0x%x\n", (u8)~status); /* 0: interrupt, 1: no interrupt*/
+    else
+        return sprintf(buf, "0x%x\n", status);
 
 exit:
     mutex_unlock(&data->update_lock);
@@ -560,6 +589,9 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
     struct extreme8730_32d_cpld_data *data = i2c_get_clientdata(client);
     int status = 0;
     u8 reg = 0, mask = 0;
+
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
 
     switch (attr->index) {
     case MODULE_PRESENT_1 ... MODULE_PRESENT_8:
@@ -579,35 +611,59 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         mask = 0x1 << (attr->index - MODULE_PRESENT_25);
         break;
     case MODULE_LPMODE_1 ... MODULE_LPMODE_8:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_1;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
         mask = 0x1 << (attr->index - MODULE_LPMODE_1);
         break;
     case MODULE_LPMODE_9 ... MODULE_LPMODE_16:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_2;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
         mask = 0x1 << (attr->index - MODULE_LPMODE_9);
         break;
     case MODULE_LPMODE_17 ... MODULE_LPMODE_24:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_1;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
         mask = 0x1 << (attr->index - MODULE_LPMODE_17);
         break;
     case MODULE_LPMODE_25 ... MODULE_LPMODE_32:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_2;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
         mask = 0x1 << (attr->index - MODULE_LPMODE_25);
         break;
     case MODULE_RESET_1 ... MODULE_RESET_8:
-        reg  = CPLD_REG_ADDR_RESET_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_1;
+        else
+            reg  = CPLD_REG_ADDR_RESET_1;
         mask = 0x1 << (attr->index - MODULE_RESET_1);
         break;
     case MODULE_RESET_9 ... MODULE_RESET_16:
-        reg  = CPLD_REG_ADDR_RESET_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_2;
+        else
+            reg  = CPLD_REG_ADDR_RESET_2;
         mask = 0x1 << (attr->index - MODULE_RESET_9);
         break;
     case MODULE_RESET_17 ... MODULE_RESET_24:
-        reg  = CPLD_REG_ADDR_RESET_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_1;
+        else
+            reg  = CPLD_REG_ADDR_RESET_1;
         mask = 0x1 << (attr->index - MODULE_RESET_17);
         break;
     case MODULE_RESET_25 ... MODULE_RESET_32:
-        reg  = CPLD_REG_ADDR_RESET_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_2;
+        else
+            reg  = CPLD_REG_ADDR_RESET_2;
         mask = 0x1 << (attr->index - MODULE_RESET_25);
         break;
     default:
@@ -620,6 +676,22 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         goto exit;
     }
     mutex_unlock(&data->update_lock);
+
+    switch (attr->index) {
+    case MODULE_PRESENT_1 ... MODULE_PRESENT_8:
+    case MODULE_PRESENT_9 ... MODULE_PRESENT_16:
+    case MODULE_PRESENT_17 ... MODULE_PRESENT_24:
+    case MODULE_PRESENT_25 ... MODULE_PRESENT_32:
+    case MODULE_RESET_1 ... MODULE_RESET_8:
+    case MODULE_RESET_9 ... MODULE_RESET_16:
+    case MODULE_RESET_17 ... MODULE_RESET_24:
+    case MODULE_RESET_25 ... MODULE_RESET_32:
+        if(cpld_version > 4)
+            return sprintf(buf, "%d\n", !(status & mask)); /* 0: present, 1: no present; 0: reset, 1: normal */
+        break;
+    default:
+        break;
+    }
 
     return sprintf(buf, "%d\n", !!(status & mask));
 
@@ -639,6 +711,9 @@ static ssize_t set_led_control(struct device *dev, struct device_attribute *da,
     int status= -ENOENT;
     u8 reg = 0, mask = 0;
 
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
+
     if(attr->index < CPLD_PORT_LED_ENABLE_1 || attr->index > CPLD_PORT_LED_ENABLE_2)
         return status;
 
@@ -653,11 +728,17 @@ static ssize_t set_led_control(struct device *dev, struct device_attribute *da,
     switch (attr->index)
 	{   
         case CPLD_PORT_LED_ENABLE_1:
-            reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
+            if(cpld_version > 4)
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL_05;
+            else
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
 			mask = 0x1;
             break;
         case CPLD_PORT_LED_ENABLE_2:
-            reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
+            if(cpld_version > 4)
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL_05;
+            else
+                reg  = CPLD_REG_ADDR_PORT_LED_CONTROL;
 			mask = 0x1;
             break;
         default:
@@ -704,6 +785,9 @@ static ssize_t set_lp_mode(struct device *dev, struct device_attribute *da,
     int status= -ENOENT;
     u8 reg = 0, mask = 0;
 
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
+
     if(attr->index < MODULE_LPMODE_1 || attr->index > MODULE_LPMODE_32)
         return status;
 
@@ -717,19 +801,31 @@ static ssize_t set_lp_mode(struct device *dev, struct device_attribute *da,
 
     switch (attr->index) {
     case MODULE_LPMODE_1 ... MODULE_LPMODE_8:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_1;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
         mask = 0x1 << (attr->index - MODULE_LPMODE_1);
         break;
     case MODULE_LPMODE_9 ... MODULE_LPMODE_16:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_2;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
         mask = 0x1 << (attr->index - MODULE_LPMODE_9);
         break;
     case MODULE_LPMODE_17 ... MODULE_LPMODE_24:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_1;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_1;
         mask = 0x1 << (attr->index - MODULE_LPMODE_17);
         break;
     case MODULE_LPMODE_25 ... MODULE_LPMODE_32:
-        reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_05_2;
+        else
+            reg  = CPLD_REG_ADDR_LOWPOWERMODE_2;
         mask = 0x1 << (attr->index - MODULE_LPMODE_25);
         break;
     default:
@@ -776,6 +872,9 @@ static ssize_t set_mode_reset(struct device *dev, struct device_attribute *da,
     int status= -ENOENT;
     u8 reg = 0, mask = 0;
 
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
+
     if(attr->index < MODULE_RESET_1 || attr->index > MODULE_RESET_32)
         return status;
 
@@ -789,19 +888,31 @@ static ssize_t set_mode_reset(struct device *dev, struct device_attribute *da,
 
     switch (attr->index) {
     case MODULE_RESET_1 ... MODULE_RESET_8:
-        reg  = CPLD_REG_ADDR_RESET_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_1;
+        else
+            reg  = CPLD_REG_ADDR_RESET_1;
         mask = 0x1 << (attr->index - MODULE_RESET_1);
         break;
     case MODULE_RESET_9 ... MODULE_RESET_16:
-        reg  = CPLD_REG_ADDR_RESET_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_2;
+        else
+            reg  = CPLD_REG_ADDR_RESET_2;
         mask = 0x1 << (attr->index - MODULE_RESET_9);
         break;
     case MODULE_RESET_17 ... MODULE_RESET_24:
-        reg  = CPLD_REG_ADDR_RESET_1;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_1;
+        else
+            reg  = CPLD_REG_ADDR_RESET_1;
         mask = 0x1 << (attr->index - MODULE_RESET_17);
         break;
     case MODULE_RESET_25 ... MODULE_RESET_32:
-        reg  = CPLD_REG_ADDR_RESET_2;
+        if(cpld_version > 4)
+            reg  = CPLD_REG_ADDR_RESET_05_2;
+        else
+            reg  = CPLD_REG_ADDR_RESET_2;
         mask = 0x1 << (attr->index - MODULE_RESET_25);
         break;
     default:
@@ -817,10 +928,16 @@ static ssize_t set_mode_reset(struct device *dev, struct device_attribute *da,
 
     /* Update reset status */
     if (on) {
-        status |= mask;
+        if(cpld_version > 4)
+            status &= ~mask;
+        else
+            status |= mask;
     }
     else {
-        status &= ~mask;
+        if(cpld_version > 4)
+            status |= mask;
+        else
+            status &= ~mask;
     }
 
     status = extreme8730_32d_cpld_write_internal(client, reg, status);
@@ -947,28 +1064,58 @@ static int extreme8730_32d_cpld_probe(struct i2c_client *client,
     mutex_init(&data->update_lock);
 
     /* Register sysfs hooks */
+    int cpld_version;
+    cpld_version = extreme8730_32d_cpld_read_internal(client, CPLD_REG_ADDR_REVISION);
     switch (data->type) {
     case extreme8730_32d_cpld1:
         group = &extreme8730_32d_cpld1_group;
-        /* Bring QSFPs out of reset for Port 1-8 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_1, 0x0);
-		/* Bring QSFPs out of reset for Port 9-16 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_2, 0x0);
-        /* Set Module Selector for transceiver EEPROM for Port 1-8 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_1, 0xFF);
-		/* Set Module Selector for transceiver EEPROM for Port 9-16 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_2, 0xFF);
+        if(cpld_version > 4)
+        {
+            /* Bring QSFPs out of reset for Port 1-8 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_05_1, 0xFF);
+		    /* Bring QSFPs out of reset for Port 9-16 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_05_2, 0xFF);
+            /* Set Module Selector for transceiver EEPROM for Port 1-8 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_05_1, 0x0);
+		    /* Set Module Selector for transceiver EEPROM for Port 9-16 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_05_2, 0x0);
+        }
+        else
+        {
+            /* Bring QSFPs out of reset for Port 1-8 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_1, 0x0);
+		    /* Bring QSFPs out of reset for Port 9-16 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_2, 0x0);
+            /* Set Module Selector for transceiver EEPROM for Port 1-8 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_1, 0xFF);
+		    /* Set Module Selector for transceiver EEPROM for Port 9-16 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_2, 0xFF);
+        }
         break;
     case extreme8730_32d_cpld2:
         group = &extreme8730_32d_cpld2_group;
-        /* Bring QSFPs out of reset for Port 17-24 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_1, 0x0);
-		/* Bring QSFPs out of reset for Port 25-32 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_2, 0x0);
-        /* Set Module Selector for transceiver EEPROM for Port 17-24 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_1, 0xFF);
-		/* Set Module Selector for transceiver EEPROM for Port 25-32 */
-        extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_2, 0xFF);
+        if(cpld_version > 4)
+        {
+            /* Bring QSFPs out of reset for Port 17-24 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_05_1, 0xFF);
+		    /* Bring QSFPs out of reset for Port 25-32 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_05_2, 0xFF);
+            /* Set Module Selector for transceiver EEPROM for Port 17-24 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_05_1, 0x0);
+		    /* Set Module Selector for transceiver EEPROM for Port 25-32 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_05_2, 0x0);
+        }
+        else
+        {
+            /* Bring QSFPs out of reset for Port 17-24 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_1, 0x0);
+		    /* Bring QSFPs out of reset for Port 25-32 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_RESET_2, 0x0);
+            /* Set Module Selector for transceiver EEPROM for Port 17-24 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_1, 0xFF);
+		    /* Set Module Selector for transceiver EEPROM for Port 25-32 */
+            extreme8730_32d_cpld_write_internal(client, CPLD_REG_ADDR_MODSELECT_2, 0xFF);
+        }
         break;
     default:
         break;
