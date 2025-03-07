@@ -52,6 +52,15 @@
 #define IPMI_SENSOR_READING_OFFSET_TEMP_TMP75_1     0x03
 #define IPMI_SENSOR_READING_OFFSET_TEMP_TMP75_2     0x04
 
+/* For read thermal threshold */
+#define IPMI_SENSOR_THRESHOLD_NETFN                 		0x04
+#define IPMI_SENSOR_THRESHOLD_READ_CMD              		0x27
+
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_CPU		0x74
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_0	0x60
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_1	0x61
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_2	0x62
+
 static unsigned int debug = 0;
 module_param(debug, uint, S_IRUGO);
 MODULE_PARM_DESC(debug, "Set DEBUG mode. Default is disabled.");
@@ -81,6 +90,12 @@ enum temp_data_index {
 	TEMP_INPUT3,
 	TEMP_DATA_COUNT
 };
+enum temp_threshold_data_index {
+	TEMP_THRESHOLD_NONCRITICAL = 4,	/* upper non-critical threshold, warning */
+	TEMP_THRESHOLD_CRITICAL,		/* upper critical, error */
+	TEMP_THRESHOLD_NONRECOVERABLE,	/* upper non-recoverable, shutdown */
+	TEMP_THRESHOLD_END
+};
 
 typedef struct ipmi_user *ipmi_user_t;
 
@@ -103,6 +118,8 @@ struct ipmi_data {
 
 struct ipmi_thermal_resp_data {
     unsigned char   status[4];	/* 4 bytes for each thermal. */
+	unsigned char   tmp_threshold[7];	/* 7 bytes for each thermal. 0~3: not use, 
+										   4: upper non-critical threshold, 5: upper critical, 6: upper non-recoverable */
 };
 
 struct extreme8730_thermal_data {
@@ -128,8 +145,14 @@ static struct platform_driver extreme8730_thermal_driver = {
 };
 
 #define THERMAL_INPUT_ATTR_ID(index)		TEMP##index##_INPUT
+#define THERMAL_WARING_ATTR_ID(index)		TEMP##index##_WARNING
+#define THERMAL_ERROR_ATTR_ID(index)		TEMP##index##_ERROR
+#define THERMAL_SHUTDOWN_ATTR_ID(index)		TEMP##index##_SHUTDOWN
 #define THERMAL_ATTR(thermal_id) \
-    THERMAL_INPUT_ATTR_ID(thermal_id)
+    THERMAL_INPUT_ATTR_ID(thermal_id), \
+	THERMAL_WARING_ATTR_ID(thermal_id), \
+	THERMAL_ERROR_ATTR_ID(thermal_id), \
+	THERMAL_SHUTDOWN_ATTR_ID(thermal_id)
 enum extreme8730_thermal_sysfs_attrs {
 	/* thermal attributes */
 	THERMAL_ATTR(1),
@@ -143,10 +166,19 @@ enum extreme8730_thermal_sysfs_attrs {
 /* thermal attributes */
 #define DECLARE_THERMAL_SENSOR_DEVICE_ATTR(index) \
 	static SENSOR_DEVICE_ATTR(temp##index##_input, S_IRUGO, show_temp, NULL, \
-                  TEMP##index##_INPUT)
+                  TEMP##index##_INPUT); \
+	static SENSOR_DEVICE_ATTR(temp##index##_warning, S_IRUGO, show_temp, NULL, \
+                  TEMP##index##_WARNING); \
+	static SENSOR_DEVICE_ATTR(temp##index##_error, S_IRUGO, show_temp, NULL, \
+                  TEMP##index##_ERROR); \
+	static SENSOR_DEVICE_ATTR(temp##index##_shutdown, S_IRUGO, show_temp, NULL, \
+                  TEMP##index##_SHUTDOWN)
 
 #define DECLARE_THERMAL_ATTR(index) \
-	&sensor_dev_attr_temp##index##_input.dev_attr.attr
+	&sensor_dev_attr_temp##index##_input.dev_attr.attr, \
+	&sensor_dev_attr_temp##index##_warning.dev_attr.attr, \
+	&sensor_dev_attr_temp##index##_error.dev_attr.attr, \
+	&sensor_dev_attr_temp##index##_shutdown.dev_attr.attr
 
 DECLARE_THERMAL_SENSOR_DEVICE_ATTR(1);
 DECLARE_THERMAL_SENSOR_DEVICE_ATTR(2);
@@ -319,7 +351,7 @@ extreme8730_thermal_update_temp_status(struct device_attribute *da)
 
 	data->valid[tid] = 0;
 	/* Get Thermal status from ipmi */
-
+	data->ipmi.tx_message.netfn = IPMI_SENSOR_NETFN;
 	switch (tid) 
 	{
 		case THERMAL_1:
@@ -343,6 +375,40 @@ extreme8730_thermal_update_temp_status(struct device_attribute *da)
 				   data->ipmi_tx_data, 1,
 				   data->ipmi_resp[tid].status,
 				   sizeof(data->ipmi_resp[tid].status));
+
+	if (unlikely(status != 0))
+		goto exit;
+
+	if (unlikely(data->ipmi.rx_result != 0)) {
+		status = -EIO;
+		goto exit;
+	}
+
+	/* Get Thermal threshold from ipmi */
+	data->ipmi.tx_message.netfn = IPMI_SENSOR_THRESHOLD_NETFN;
+	switch (tid) 
+	{
+		case THERMAL_1:
+			data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_CPU;
+			break;
+		case THERMAL_2:
+			data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_0;
+			break;
+		case THERMAL_3:
+			data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_1;
+			break;
+		case THERMAL_4:
+			data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_TMP75_2;
+			break;
+		default:
+			status = -EIO;
+			goto exit;
+	}
+
+	status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+				   data->ipmi_tx_data, 1,
+				   data->ipmi_resp[tid].tmp_threshold,
+				   sizeof(data->ipmi_resp[tid].tmp_threshold));
 
 	if (unlikely(status != 0))
 		goto exit;
@@ -383,6 +449,24 @@ static ssize_t show_temp(struct device *dev, struct device_attribute *da,
 				(int)data->ipmi_resp[tid].status[TEMP_INPUT1] << 8 |
 				(int)data->ipmi_resp[tid].status[TEMP_INPUT2] << 16 |
 				(int)data->ipmi_resp[tid].status[TEMP_INPUT3] << 32);
+		break;
+	case TEMP1_WARNING:
+	case TEMP2_WARNING:
+	case TEMP3_WARNING:
+	case TEMP4_WARNING:
+		value = data->ipmi_resp[tid].tmp_threshold[TEMP_THRESHOLD_NONCRITICAL] * 1000; /* Convert to milli-celsius */
+		break;
+	case TEMP1_ERROR:
+	case TEMP2_ERROR:
+	case TEMP3_ERROR:
+	case TEMP4_ERROR:
+		value = data->ipmi_resp[tid].tmp_threshold[TEMP_THRESHOLD_CRITICAL] * 1000; /* Convert to milli-celsius */
+		break;
+	case TEMP1_SHUTDOWN:
+	case TEMP2_SHUTDOWN:
+	case TEMP3_SHUTDOWN:
+	case TEMP4_SHUTDOWN:
+		value = data->ipmi_resp[tid].tmp_threshold[TEMP_THRESHOLD_NONRECOVERABLE] * 1000; /* Convert to milli-celsius */
 		break;
 	default:
 		error = -EINVAL;

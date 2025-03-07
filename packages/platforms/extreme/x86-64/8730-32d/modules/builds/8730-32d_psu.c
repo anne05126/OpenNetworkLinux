@@ -71,6 +71,17 @@
 #define IPMI_SENSOR_OFFSET_PSU1			0x01
 #define IPMI_SENSOR_OFFSET_PSU2			0x02
 
+/* For read PSU thermal threshold */
+#define IPMI_SENSOR_THRESHOLD_NETFN                 			0x04
+#define IPMI_SENSOR_THRESHOLD_READ_CMD              			0x27
+
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP0	0x63
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP1	0x64
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP2	0x65
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP0	0x66
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP1	0x67
+#define IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP2	0x68
+
 static unsigned int debug = 0;
 module_param(debug, uint, S_IRUGO);
 MODULE_PARM_DESC(debug, "Set DEBUG mode. Default is disabled.");
@@ -139,6 +150,23 @@ enum psu_temp_byte_index {
     TEMP2_BYTE3
 };
 
+enum psu_temp_index {
+	PSU1_TEMP0,
+	PSU1_TEMP1,
+	PSU1_TEMP2,
+	PSU2_TEMP0,
+	PSU2_TEMP1,
+	PSU2_TEMP2,
+	TEMP_END
+};
+
+enum psu_temp_threshold_data_index {
+	PSU_TEMP_THRESHOLD_NONCRITICAL = 4,	/* upper non-critical threshold, warning */
+	PSU_TEMP_THRESHOLD_CRITICAL,		/* upper critical, error */
+	PSU_TEMP_THRESHOLD_NONRECOVERABLE,	/* upper non-recoverable, shutdown */
+	PSU_TEMP_THRESHOLD_END
+};
+
 enum psu_fan_byte_index {
     FAN0_BYTE0,
 	FAN0_BYTE1,
@@ -176,6 +204,10 @@ struct ipmi_data {
 	struct ipmi_user_hndl ipmi_hndlrs;
 };
 
+struct ipmi_psu_temp_threshold_resp_data {
+	unsigned char   temp_threshold_value[7];	/* 0-3: not use, 4: upper non-critical threshold, 5: upper critical, 6: upper non-recoverable */
+};
+
 struct ipmi_psu_resp_data {
 	unsigned char   fru[50];
 	unsigned char   eeprom[256];
@@ -196,6 +228,7 @@ struct extreme8730_32d_psu_data {
 	unsigned long	 last_updated_status[2]; /* In jiffies, 0: PSU1, 1: PSU2 */
 	struct ipmi_data ipmi;
 	struct ipmi_psu_resp_data ipmi_resp[2]; /* 0: PSU1, 1: PSU2 */
+	struct ipmi_psu_temp_threshold_resp_data ipmi_temp_threshold_resp[6]; /* 0: PSU1_TEMP0, 1: PSU1_TEMP1, 2: PSU1_TEMP2, 3: PSU2_TEMP0, 4: PSU2_TEMP1, 5: PSU2_TEMP2 */
 	unsigned char ipmi_tx_data[4];
 };
 
@@ -225,6 +258,15 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 #define PSU_TEMP1_INPUT_ATTR_ID(index)  PSU##index##_TEMP1_INPUT
 #define PSU_TEMP2_INPUT_ATTR_ID(index)  PSU##index##_TEMP2_INPUT
 #define PSU_TEMP3_INPUT_ATTR_ID(index)  PSU##index##_TEMP3_INPUT
+#define PSU_TEMP1_WARNING_ATTR_ID(index)  PSU##index##_TEMP1_WARNING
+#define PSU_TEMP1_ERROR_ATTR_ID(index)    PSU##index##_TEMP1_ERROR
+#define PSU_TEMP1_SHUTDOWN_ATTR_ID(index) PSU##index##_TEMP1_SHUTDOWN
+#define PSU_TEMP2_WARNING_ATTR_ID(index)  PSU##index##_TEMP2_WARNING
+#define PSU_TEMP2_ERROR_ATTR_ID(index)    PSU##index##_TEMP2_ERROR
+#define PSU_TEMP2_SHUTDOWN_ATTR_ID(index) PSU##index##_TEMP2_SHUTDOWN
+#define PSU_TEMP3_WARNING_ATTR_ID(index)  PSU##index##_TEMP3_WARNING
+#define PSU_TEMP3_ERROR_ATTR_ID(index)    PSU##index##_TEMP3_ERROR
+#define PSU_TEMP3_SHUTDOWN_ATTR_ID(index) PSU##index##_TEMP3_SHUTDOWN
 #define PSU_FAN1_INPUT_ATTR_ID(index)   PSU##index##_FAN1_INPUT
 #define PSU_FAN2_INPUT_ATTR_ID(index)   PSU##index##_FAN2_INPUT
 
@@ -244,6 +286,15 @@ static struct platform_driver extreme8730_32d_psu_driver = {
 		PSU_TEMP1_INPUT_ATTR_ID(psu_id), \
 		PSU_TEMP2_INPUT_ATTR_ID(psu_id), \
 		PSU_TEMP3_INPUT_ATTR_ID(psu_id), \
+		PSU_TEMP1_WARNING_ATTR_ID(psu_id), \
+		PSU_TEMP1_ERROR_ATTR_ID(psu_id), \
+		PSU_TEMP1_SHUTDOWN_ATTR_ID(psu_id), \
+		PSU_TEMP2_WARNING_ATTR_ID(psu_id), \
+		PSU_TEMP2_ERROR_ATTR_ID(psu_id), \
+		PSU_TEMP2_SHUTDOWN_ATTR_ID(psu_id), \
+		PSU_TEMP3_WARNING_ATTR_ID(psu_id), \
+		PSU_TEMP3_ERROR_ATTR_ID(psu_id), \
+		PSU_TEMP3_SHUTDOWN_ATTR_ID(psu_id), \
 		PSU_FAN1_INPUT_ATTR_ID(psu_id), \
 		PSU_FAN2_INPUT_ATTR_ID(psu_id)
 	
@@ -272,6 +323,15 @@ enum extreme8730_32d_psu_sysfs_attrs {
 		static SENSOR_DEVICE_ATTR(psu##index##_temp1_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP1_INPUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_temp2_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP2_INPUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_temp3_input, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP3_INPUT); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp1_warning, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP1_WARNING); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp1_error, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP1_ERROR); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp1_shutdown, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP1_SHUTDOWN); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp2_warning, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP2_WARNING); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp2_error, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP2_ERROR); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp2_shutdown, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP2_SHUTDOWN); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp3_warning, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP3_WARNING); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp3_error, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP3_ERROR); \
+		static SENSOR_DEVICE_ATTR(psu##index##_temp3_shutdown, S_IRUGO, show_psu,	NULL, PSU##index##_TEMP3_SHUTDOWN); \
 		static SENSOR_DEVICE_ATTR(psu##index##_fan1_input, S_IRUGO, show_psu,	NULL, PSU##index##_FAN1_INPUT); \
 		static SENSOR_DEVICE_ATTR(psu##index##_fan2_input, S_IRUGO, show_psu,  NULL, PSU##index##_FAN2_INPUT)	
 #define DECLARE_PSU_ATTR(index) \
@@ -290,6 +350,15 @@ enum extreme8730_32d_psu_sysfs_attrs {
 		&sensor_dev_attr_psu##index##_temp1_input.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_temp2_input.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_temp3_input.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp1_warning.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp1_error.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp1_shutdown.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp2_warning.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp2_error.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp2_shutdown.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp3_warning.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp3_error.dev_attr.attr, \
+		&sensor_dev_attr_psu##index##_temp3_shutdown.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_fan1_input.dev_attr.attr, \
 		&sensor_dev_attr_psu##index##_fan2_input.dev_attr.attr
 	
@@ -452,7 +521,6 @@ static struct extreme8730_32d_psu_data *extreme8730_32d_psu_update_device(struct
 
 	if (unlikely(data->ipmi.rx_result != 0)) {
 		status = -EIO;
-		DEBUG_PRINT("%s:%d \n", __FUNCTION__, __LINE__);
 		goto exit;
 	}
 
@@ -498,6 +566,112 @@ if(data->ipmi_resp[pid].status[PSU_PRESENT] != 0)
 	if (unlikely(data->ipmi.rx_result != 0)) {
 		status = -EIO;
 		goto exit;
+	}
+
+	/* Get psu thermal threshold from ipmi */
+	if(pid == PSU_1)
+	{
+		data->ipmi.tx_message.netfn = IPMI_SENSOR_THRESHOLD_NETFN;
+
+		/* Get psu 1 thermal 1 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP0;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU1_TEMP0].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU1_TEMP0].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
+
+		/* Get psu 1 thermal 2 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP1;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU1_TEMP1].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU1_TEMP1].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
+
+		/* Get psu 1 thermal 3 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU1_TEMP2;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU1_TEMP2].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU1_TEMP2].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
+	}
+	else
+	{
+		data->ipmi.tx_message.netfn = IPMI_SENSOR_THRESHOLD_NETFN;
+
+		/* Get psu 2 thermal 1 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP0;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU2_TEMP0].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU2_TEMP0].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
+
+		/* Get psu 2 thermal 2 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP1;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU2_TEMP1].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU2_TEMP1].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
+
+		/* Get psu 2 thermal 3 threshold from ipmi */
+		data->ipmi_tx_data[0] = IPMI_SENSOR_THRESHOLD_READING_OFFSET_TEMP_PSU2_TEMP2;
+
+		status = ipmi_send_message(&data->ipmi, IPMI_SENSOR_THRESHOLD_READ_CMD,
+			data->ipmi_tx_data, 1,
+			data->ipmi_temp_threshold_resp[PSU2_TEMP2].temp_threshold_value,
+			sizeof(data->ipmi_temp_threshold_resp[PSU2_TEMP2].temp_threshold_value));
+		
+		if (unlikely(status != 0))
+			goto exit;
+
+		if (unlikely(data->ipmi.rx_result != 0)) {
+			status = -EIO;
+			goto exit;
+		}
 	}
 }
 
@@ -616,7 +790,8 @@ static ssize_t show_psu(struct device *dev, struct device_attribute *da, char *b
 	int value = 0;
 	int error = 0;
 	int present = 0;
-
+	int psu_temp_index = 0;
+	
 	mutex_lock(&data->update_lock);
 
 	data = extreme8730_32d_psu_update_device(da);
@@ -711,6 +886,123 @@ static ssize_t show_psu(struct device *dev, struct device_attribute *da, char *b
 				(int)data->ipmi_resp[pid].temp_input[TEMP2_BYTE1] << 8 |
 				(int)data->ipmi_resp[pid].temp_input[TEMP2_BYTE2] << 16 |
 				(int)data->ipmi_resp[pid].temp_input[TEMP2_BYTE3] << 32);
+			break;
+		case PSU1_TEMP1_WARNING:
+		case PSU2_TEMP1_WARNING:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP0;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP0;
+			}				
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONCRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP1_ERROR:
+		case PSU2_TEMP1_ERROR:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP0;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP0;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_CRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP1_SHUTDOWN:
+		case PSU2_TEMP1_SHUTDOWN:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP0;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP0;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONRECOVERABLE] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP2_WARNING:
+		case PSU2_TEMP2_WARNING:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP1;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP1;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONCRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP2_ERROR:
+		case PSU2_TEMP2_ERROR:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP1;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP1;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_CRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP2_SHUTDOWN:
+		case PSU2_TEMP2_SHUTDOWN:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP1;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP1;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONRECOVERABLE] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP3_WARNING:
+		case PSU2_TEMP3_WARNING:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP2;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP2;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONCRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP3_ERROR:
+		case PSU2_TEMP3_ERROR:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP2;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP2;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_CRITICAL] * 1000; /* Convert to milli-celsius */
+			break;
+		case PSU1_TEMP3_SHUTDOWN:
+		case PSU2_TEMP3_SHUTDOWN:
+			VALIDATE_PRESENT_RETURN(pid);
+			if(pid == PSU_1)
+			{
+				psu_temp_index = PSU1_TEMP2;
+			}
+			else
+			{
+				psu_temp_index = PSU2_TEMP2;
+			}
+			value = data->ipmi_temp_threshold_resp[psu_temp_index].temp_threshold_value[PSU_TEMP_THRESHOLD_NONRECOVERABLE] * 1000; /* Convert to milli-celsius */
 			break;
 		case PSU1_FAN1_INPUT:
 		case PSU2_FAN1_INPUT:

@@ -34,6 +34,49 @@
         }                                       \
     } while(0)
 
+struct threshold_t {
+    char *warning;
+    char *error;
+    char *shutdown;
+};
+
+struct threshold_t threshold[TOTAL_THERMAL_COUNT+1] =
+{
+    [0].warning = "reserved",
+    [0].error = "reserved",
+    [0].shutdown = "reserved",
+    [THERMAL_1_ON_MAINBOARD].warning  = "/sys/bus/platform/devices/8730_thermal/temp1_warning",
+    [THERMAL_1_ON_MAINBOARD].error    = "/sys/bus/platform/devices/8730_thermal/temp1_error",
+    [THERMAL_1_ON_MAINBOARD].shutdown = "/sys/bus/platform/devices/8730_thermal/temp1_shutdown",
+    [THERMAL_2_ON_MAINBOARD].warning  = "/sys/bus/platform/devices/8730_thermal/temp2_warning",
+    [THERMAL_2_ON_MAINBOARD].error    = "/sys/bus/platform/devices/8730_thermal/temp2_error",
+    [THERMAL_2_ON_MAINBOARD].shutdown = "/sys/bus/platform/devices/8730_thermal/temp2_shutdown",
+    [THERMAL_3_ON_MAINBOARD].warning  = "/sys/bus/platform/devices/8730_thermal/temp3_warning",
+    [THERMAL_3_ON_MAINBOARD].error    = "/sys/bus/platform/devices/8730_thermal/temp3_error",
+    [THERMAL_3_ON_MAINBOARD].shutdown = "/sys/bus/platform/devices/8730_thermal/temp3_shutdown",
+    [THERMAL_4_ON_MAINBOARD].warning  = "/sys/bus/platform/devices/8730_thermal/temp4_warning",
+    [THERMAL_4_ON_MAINBOARD].error    = "/sys/bus/platform/devices/8730_thermal/temp4_error",
+    [THERMAL_4_ON_MAINBOARD].shutdown = "/sys/bus/platform/devices/8730_thermal/temp4_shutdown",
+    [THERMAL_1_ON_PSU1].warning  = "/sys/bus/platform/devices/8730_psu/psu1_temp1_warning",
+    [THERMAL_1_ON_PSU1].error    = "/sys/bus/platform/devices/8730_psu/psu1_temp1_error",
+    [THERMAL_1_ON_PSU1].shutdown = "/sys/bus/platform/devices/8730_psu/psu1_temp1_shutdown",
+    [THERMAL_2_ON_PSU1].warning  = "/sys/bus/platform/devices/8730_psu/psu1_temp2_warning",
+    [THERMAL_2_ON_PSU1].error    = "/sys/bus/platform/devices/8730_psu/psu1_temp2_error",
+    [THERMAL_2_ON_PSU1].shutdown = "/sys/bus/platform/devices/8730_psu/psu1_temp2_shutdown",
+    [THERMAL_3_ON_PSU1].warning  = "/sys/bus/platform/devices/8730_psu/psu1_temp3_warning",
+    [THERMAL_3_ON_PSU1].error    = "/sys/bus/platform/devices/8730_psu/psu1_temp3_error",
+    [THERMAL_3_ON_PSU1].shutdown = "/sys/bus/platform/devices/8730_psu/psu1_temp3_shutdown",
+    [THERMAL_1_ON_PSU2].warning  = "/sys/bus/platform/devices/8730_psu/psu2_temp1_warning",
+    [THERMAL_1_ON_PSU2].error    = "/sys/bus/platform/devices/8730_psu/psu2_temp1_error",
+    [THERMAL_1_ON_PSU2].shutdown = "/sys/bus/platform/devices/8730_psu/psu2_temp1_shutdown",
+    [THERMAL_2_ON_PSU2].warning  = "/sys/bus/platform/devices/8730_psu/psu2_temp2_warning",
+    [THERMAL_2_ON_PSU2].error    = "/sys/bus/platform/devices/8730_psu/psu2_temp2_error",
+    [THERMAL_2_ON_PSU2].shutdown = "/sys/bus/platform/devices/8730_psu/psu2_temp2_shutdown",
+    [THERMAL_3_ON_PSU2].warning  = "/sys/bus/platform/devices/8730_psu/psu2_temp3_warning",
+    [THERMAL_3_ON_PSU2].error    = "/sys/bus/platform/devices/8730_psu/psu2_temp3_error",
+    [THERMAL_3_ON_PSU2].shutdown = "/sys/bus/platform/devices/8730_psu/psu2_temp3_shutdown",
+};
+
 static char* devfiles__[] =  /* must map with onlp_thermal_id (platform_lib.h) */
 {
     "reserved",
@@ -124,6 +167,10 @@ onlp_thermali_info_get(onlp_oid_t id, onlp_thermal_info_t* info)
 
     /* Set the onlp_oid_hdr_t and capabilities */
     *info = linfo[tid];
+
+    onlp_file_read_int(&info->thresholds.warning, threshold[tid].warning);
+    onlp_file_read_int(&info->thresholds.error, threshold[tid].error);
+    onlp_file_read_int(&info->thresholds.shutdown, threshold[tid].shutdown);
 
     return onlp_file_read_int(&info->mcelsius, devfiles__[tid]);
 }
